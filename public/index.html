@@ -1,0 +1,268 @@
+<!-- public/index.html -->
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pull Map - Admin</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; height: 100vh; }
+    #map { flex: 1; }
+    #sidebar {
+      width: 360px;
+      background: #f8f9fa;
+      border-left: 1px solid #dee2e6;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+    #sidebar h2 { padding: 16px; background: #343a40; color: #fff; font-size: 16px; }
+    .section { padding: 16px; border-bottom: 1px solid #dee2e6; }
+    .section h3 { font-size: 14px; margin-bottom: 8px; color: #495057; }
+    label { display: block; font-size: 12px; color: #6c757d; margin-top: 6px; }
+    input, select { width: 100%; padding: 6px 8px; border: 1px solid #ced4da; border-radius: 4px; font-size: 13px; margin-top: 2px; }
+    button {
+      margin-top: 10px; padding: 8px 12px; border: none; border-radius: 4px;
+      cursor: pointer; font-size: 13px; color: #fff; background: #007bff;
+    }
+    button:hover { background: #0056b3; }
+    button.danger { background: #dc3545; }
+    button.danger:hover { background: #a71d2a; }
+    button.toggle { background: #6c757d; }
+    button.toggle:hover { background: #545b62; }
+    #pointList { list-style: none; padding: 0; }
+    #pointList li {
+      padding: 8px; margin-top: 6px; background: #fff; border: 1px solid #dee2e6;
+      border-radius: 4px; font-size: 12px; display: flex; justify-content: space-between; align-items: center;
+    }
+    #pointList li.inactive { opacity: 0.5; }
+    .point-actions button { margin-left: 4px; margin-top: 0; padding: 4px 8px; font-size: 11px; }
+    #videoContainer { padding: 16px; }
+    #videoContainer video { width: 100%; border-radius: 4px; background: #000; }
+    #videoContainer .no-video { color: #6c757d; font-size: 13px; }
+    .priority-dot {
+      display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px;
+    }
+    .tab-bar { display: flex; background: #343a40; }
+    .tab-bar button {
+      flex: 1; margin: 0; padding: 10px; border: none; border-radius: 0;
+      background: #495057; color: #adb5bd; font-size: 13px; cursor: pointer;
+    }
+    .tab-bar button.active { background: #343a40; color: #fff; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    #segmentTable { width: 100%; border-collapse: collapse; font-size: 11px; }
+    #segmentTable th { background: #e9ecef; padding: 6px 4px; text-align: left; position: sticky; top: 0; }
+    #segmentTable td { padding: 5px 4px; border-bottom: 1px solid #eee; }
+    #segmentTable tr:hover { background: #f0f7ff; cursor: pointer; }
+    #segmentTable .has-video { color: #28a745; font-weight: bold; }
+    #segmentTable .no-vid { color: #ccc; }
+    .segment-count { font-size: 12px; color: #6c757d; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="sidebar">
+    <h2>Pull Map Admin</h2>
+    <div class="tab-bar">
+      <button class="active" onclick="switchTab('manage')">管理</button>
+      <button onclick="switchTab('segments')">受信ログ</button>
+    </div>
+
+    <div id="tab-manage" class="tab-content active">
+
+    <div id="videoContainer" class="section">
+      <h3>Video Preview</h3>
+      <p class="no-video">Click a marker to preview video</p>
+    </div>
+
+    <div class="section">
+      <h3>Add Request Point</h3>
+      <label>Label<input id="inputLabel" type="text" placeholder="e.g. Intersection A"></label>
+      <label>Latitude<input id="inputLat" type="number" step="any"></label>
+      <label>Longitude<input id="inputLon" type="number" step="any"></label>
+      <label>Radius (m)<input id="inputRadius" type="number" value="50"></label>
+      <label>Priority
+        <select id="inputPriority">
+          <option value="1">1 - High (Red)</option>
+          <option value="2">2 - Medium (Orange)</option>
+          <option value="3">3 - Low (Yellow)</option>
+        </select>
+      </label>
+      <button onclick="addPoint()">Add Point</button>
+    </div>
+
+    <div class="section">
+      <h3>Request Points</h3>
+      <ul id="pointList"></ul>
+    </div>
+
+    </div><!-- end tab-manage -->
+
+    <div id="tab-segments" class="tab-content">
+      <div class="section">
+        <h3>受信した位置情報ログ</h3>
+        <p class="segment-count">合計: <span id="segmentCount">0</span> 件</p>
+        <div style="overflow-y:auto; max-height:calc(100vh - 160px);">
+          <table id="segmentTable">
+            <thead>
+              <tr><th>時刻</th><th>緯度</th><th>経度</th><th>動画</th></tr>
+            </thead>
+            <tbody id="segmentBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div><!-- end tab-segments -->
+
+  </div>
+
+  <script>
+    const map = L.map('map').setView([35.6812, 139.7671], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    let markersLayer = L.layerGroup().addTo(map);
+    let segmentMarkersLayer = L.layerGroup().addTo(map);
+
+    const priorityColors = { 1: '#dc3545', 2: '#fd7e14', 3: '#ffc107' };
+
+    function createCircleIcon(priority) {
+      const color = priorityColors[priority] || '#6c757d';
+      return L.divIcon({
+        className: '',
+        html: `<div style="width:18px;height:18px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);"></div>`,
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+      });
+    }
+
+    map.on('click', (e) => {
+      document.getElementById('inputLat').value = e.latlng.lat.toFixed(6);
+      document.getElementById('inputLon').value = e.latlng.lng.toFixed(6);
+    });
+
+    async function fetchPoints() {
+      const res = await fetch('/api/admin/request-points');
+      const points = await res.json();
+      markersLayer.clearLayers();
+      const list = document.getElementById('pointList');
+      list.innerHTML = '';
+
+      points.forEach(p => {
+        const marker = L.marker([p.latitude, p.longitude], { icon: createCircleIcon(p.priority) })
+          .bindTooltip(p.label);
+        marker.on('click', () => loadVideo(p.latitude, p.longitude));
+        markersLayer.addLayer(marker);
+
+        const li = document.createElement('li');
+        if (!p.is_active) li.classList.add('inactive');
+        const dotColor = priorityColors[p.priority] || '#6c757d';
+        li.innerHTML = `
+          <span><span class="priority-dot" style="background:${dotColor}"></span>${p.label} (P${p.priority})</span>
+          <span class="point-actions">
+            <button class="toggle" onclick="togglePoint(${p.id})">${p.is_active ? 'Disable' : 'Enable'}</button>
+            <button class="danger" onclick="deletePoint(${p.id})">Delete</button>
+          </span>`;
+        list.appendChild(li);
+      });
+    }
+
+    async function addPoint() {
+      const body = {
+        label: document.getElementById('inputLabel').value,
+        latitude: parseFloat(document.getElementById('inputLat').value),
+        longitude: parseFloat(document.getElementById('inputLon').value),
+        radius_m: parseFloat(document.getElementById('inputRadius').value) || 50,
+        priority: parseInt(document.getElementById('inputPriority').value) || 1,
+      };
+      await fetch('/api/admin/request-points', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      document.getElementById('inputLabel').value = '';
+      fetchPoints();
+    }
+
+    async function deletePoint(id) {
+      await fetch(`/api/admin/request-points/${id}`, { method: 'DELETE' });
+      fetchPoints();
+    }
+
+    async function togglePoint(id) {
+      await fetch(`/api/admin/request-points/${id}`, { method: 'PATCH' });
+      fetchPoints();
+    }
+
+    async function loadVideo(lat, lon) {
+      const container = document.getElementById('videoContainer');
+      const res = await fetch(`/api/latest-video?lat=${lat}&lon=${lon}`);
+      const data = await res.json();
+
+      if (data.found) {
+        container.innerHTML = `
+          <h3>Video Preview</h3>
+          <video controls autoplay src="${data.videoUrl}"></video>
+          <p style="font-size:11px;color:#6c757d;margin-top:4px;">
+            Recorded: ${new Date(data.recordedAt).toLocaleString()}<br>
+            Segment: ${data.segmentId}
+          </p>`;
+      } else {
+        container.innerHTML = '<h3>Video Preview</h3><p class="no-video">No video available for this location</p>';
+      }
+    }
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-bar button').forEach(b => b.classList.remove('active'));
+      document.getElementById('tab-' + tab).classList.add('active');
+      document.querySelector(`.tab-bar button[onclick="switchTab('${tab}')"]`).classList.add('active');
+      if (tab === 'segments') fetchSegments();
+    }
+
+    async function fetchSegments() {
+      const res = await fetch('/api/admin/segments');
+      const segments = await res.json();
+      document.getElementById('segmentCount').textContent = segments.length;
+      const tbody = document.getElementById('segmentBody');
+      tbody.innerHTML = '';
+      segmentMarkersLayer.clearLayers();
+
+      segments.forEach(s => {
+        const time = new Date(s.received_at).toLocaleString('ja-JP');
+        const hasVideo = s.video_path ? '有' : '—';
+        const cls = s.video_path ? 'has-video' : 'no-vid';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${time}</td><td>${Number(s.latitude).toFixed(5)}</td><td>${Number(s.longitude).toFixed(5)}</td><td class="${cls}">${hasVideo}</td>`;
+        tr.onclick = () => {
+          map.setView([s.latitude, s.longitude], 17);
+          if (s.video_path) {
+            switchTab('manage');
+            loadVideo(s.latitude, s.longitude);
+          }
+        };
+        tbody.appendChild(tr);
+
+        const icon = L.divIcon({
+          className: '',
+          html: `<div style="width:8px;height:8px;border-radius:50%;background:${s.video_path ? '#28a745' : '#007bff'};border:1px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.3);"></div>`,
+          iconSize: [8, 8],
+          iconAnchor: [4, 4],
+        });
+        const marker = L.marker([s.latitude, s.longitude], { icon });
+        marker.bindTooltip(`${time}<br>ID: ${s.id.substring(0,8)}...`, { direction: 'top' });
+        segmentMarkersLayer.addLayer(marker);
+      });
+    }
+
+    fetchPoints();
+    fetchSegments();
+    setInterval(fetchPoints, 30000);
+    setInterval(fetchSegments, 30000);
+  </script>
+</body>
+</html>
