@@ -30,7 +30,21 @@ router.post('/admin/request-points', async (req, res) => {
        RETURNING *`,
       [label, latitude, longitude, radius_m || 50, priority || 1]
     );
-    res.status(201).json(result.rows[0]);
+
+    const rp = result.rows[0];
+    await pool.query(
+      `INSERT INTO video_requests (request_point_id, segment_id, device_id)
+       SELECT $1, s.id, s.device_id
+       FROM segments s
+       WHERE earth_distance(
+               ll_to_earth($2, $3),
+               ll_to_earth(s.latitude, s.longitude)
+             ) <= $4
+       ON CONFLICT ON CONSTRAINT unique_video_request DO NOTHING`,
+      [rp.id, rp.latitude, rp.longitude, rp.radius_m]
+    );
+
+    res.status(201).json(rp);
   } catch (err) {
     console.error('POST /api/admin/request-points error:', err);
     res.status(500).json({ error: err.message });
