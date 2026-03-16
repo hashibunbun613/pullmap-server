@@ -1,17 +1,13 @@
-// routes/videos.js
-
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { uploadVideo, deleteVideo, getVideoUrl, streamVideo, isR2Configured } = require('../lib/storage');
 const router = express.Router();
 
 const uploadsDir = path.join(__dirname, '..', 'uploads');
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadsDir),
-  filename: (req, _file, cb) => cb(null, `${req.params.segmentId}.mp4`),
-});
+const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
 // PUT /api/video/:segmentId
@@ -26,7 +22,6 @@ router.put('/video/:segmentId', upload.single('video'), async (req, res) => {
     );
 
     if (existing.rows.length === 0) {
-      if (req.file) fs.unlinkSync(req.file.path);
       return res.status(404).json({ error: 'Segment not found' });
     }
 
@@ -36,7 +31,6 @@ router.put('/video/:segmentId', upload.single('video'), async (req, res) => {
     const existingRecordedAt = new Date(existing.rows[0].recorded_at);
 
     if (incomingRecordedAt && incomingRecordedAt < existingRecordedAt) {
-      if (req.file) fs.unlinkSync(req.file.path);
       return res.json({ ok: true, adopted: false, reason: 'Newer recording already exists' });
     }
 
@@ -45,16 +39,28 @@ router.put('/video/:segmentId', upload.single('video'), async (req, res) => {
     )).rows[0].video_path;
 
     if (oldVideoPath) {
-      const oldFullPath = path.join(uploadsDir, path.basename(oldVideoPath));
-      if (fs.existsSync(oldFullPath)) fs.unlinkSync(oldFullPath);
+      if (isR2Configured) {
+        await deleteVideo(oldVideoPath);
+      } else {
+        const oldFullPath = path.join(uploadsDir, path.basename(oldVideoPath));
+        if (fs.existsSync(oldFullPath)) fs.unlinkSync(oldFullPath);
+      }
     }
 
-    const videoPath = `${segmentId}.mp4`;
+    const videoKey = `${segmentId}.mp4`;
+
+    if (isR2Configured && req.file) {
+      await uploadVideo(videoKey, req.file.buffer);
+    } else if (req.file) {
+      const localPath = path.join(uploadsDir, videoKey);
+      fs.writeFileSync(localPath, req.file.buffer);
+    }
+
     await pool.query(
       `UPDATE segments
        SET video_path = $1, video_received_at = NOW()
        WHERE id = $2`,
-      [videoPath, segmentId]
+      [videoKey, segmentId]
     );
 
     await pool.query(
@@ -67,6 +73,24 @@ router.put('/video/:segmentId', upload.single('video'), async (req, res) => {
     res.json({ ok: true, adopted: true });
   } catch (err) {
     console.error('PUT /api/video/:segmentId error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/video-stream/:key — proxy R2 video when no public URL is set
+router.get('/video-stream/:key', async (req, res) => {
+  try {
+    const resp = await streamVideo(req.params.key);
+    if (!resp) {
+      const localPath = path.join(uploadsDir, req.params.key);
+      if (fs.existsSync(localPath)) return res.sendFile(localPath);
+      return res.status(404).json({ error: 'Not found' });
+    }
+    res.set('Content-Type', resp.ContentType || 'video/mp4');
+    if (resp.ContentLength) res.set('Content-Length', String(resp.ContentLength));
+    resp.Body.pipe(res);
+  } catch (err) {
+    console.error('video-stream error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -103,7 +127,7 @@ router.get('/latest-video', async (req, res) => {
       latitude: row.latitude,
       longitude: row.longitude,
       recordedAt: row.recorded_at,
-      videoUrl: `/videos/${row.video_path}`,
+      videoUrl: getVideoUrl(row.video_path),
     });
   } catch (err) {
     console.error('GET /api/latest-video error:', err);
