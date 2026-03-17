@@ -95,6 +95,20 @@ router.get('/requests', async (req, res) => {
 router.post('/admin/request-all', async (req, res) => {
   const pool = req.pool;
   try {
+    // Ensure "全収集" request point exists (huge radius = covers all)
+    let { rows: rpRows } = await pool.query(
+      `SELECT id FROM request_points WHERE label = '全収集' LIMIT 1`
+    );
+    if (rpRows.length === 0) {
+      const { rows: ins } = await pool.query(
+        `INSERT INTO request_points (label, latitude, longitude, radius_m, priority)
+         VALUES ('全収集', 0, 0, 999999999, 1)
+         RETURNING id`
+      );
+      rpRows = ins;
+    }
+    const rpId = rpRows[0].id;
+
     const { rows } = await pool.query(
       `SELECT id, device_id FROM segments
        WHERE video_path IS NULL
@@ -103,24 +117,25 @@ router.post('/admin/request-all', async (req, res) => {
 
     let created = 0;
     for (const seg of rows) {
-      // Use request_point_id = 0 convention for "collect all" requests
-      // First ensure a special request point exists
-      await pool.query(
-        `INSERT INTO request_points (id, label, latitude, longitude, radius_m, priority)
-         VALUES (0, '全収集', 0, 0, 0, 1)
-         ON CONFLICT (id) DO NOTHING`
-      );
-
-      await pool.query(
+      const r = await pool.query(
         `INSERT INTO video_requests (request_point_id, segment_id, device_id)
-         VALUES (0, $1, $2)
+         VALUES ($1, $2, $3)
          ON CONFLICT ON CONSTRAINT unique_video_request DO NOTHING`,
-        [seg.id, seg.device_id]
+        [rpId, seg.id, seg.device_id]
       );
-      created++;
+      if (r.rowCount > 0) created++;
     }
 
-    res.json({ total: rows.length, requested: created });
+    const { rows: pendingRows } = await pool.query(
+      `SELECT COUNT(*) AS n FROM video_requests WHERE status = 'pending'`
+    );
+    const pendingCount = parseInt(pendingRows[0].n, 10);
+
+    res.json({
+      total: rows.length,
+      requested: created,
+      pendingTotal: pendingCount,
+    });
   } catch (err) {
     console.error('POST /api/admin/request-all error:', err);
     res.status(500).json({ error: err.message });

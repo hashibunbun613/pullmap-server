@@ -429,7 +429,13 @@
       setStatus('全セグメントの動画を要求中...');
       const res = await fetch('/api/admin/request-all', { method: 'POST' });
       const data = await res.json();
-      setStatus(`${data.requested} 件の動画を要求しました。iPhoneがWi-Fi接続時に送信されます。`);
+      if (data.requested > 0) {
+        setStatus(`${data.requested} 件を新規に要求しました。iPhoneをWi-Fi接続にしてアプリを開いてください。`);
+      } else if (data.pendingTotal > 0) {
+        setStatus(`既に ${data.pendingTotal} 件が要求済みです。iPhoneをWi-Fi接続にしてアプリを開いて送信を待ってください。`);
+      } else {
+        setStatus('要求する動画がありません。先に道を歩いて録画してください。');
+      }
     }
 
     // Init
