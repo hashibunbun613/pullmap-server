@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { extractAndStore, framesDir } = require('../lib/frame-extractor');
 const { comparePassFrames } = require('../lib/change-detector');
+const { getFrameUrl, getDiffUrl, isR2Configured } = require('../lib/storage');
 const path = require('path');
 const fs = require('fs');
 
@@ -123,7 +124,11 @@ router.get('/passes/:id/frames', async (req, res) => {
        ORDER BY ps.sequence_order`,
       [req.params.id]
     );
-    res.json(rows);
+    const framesWithUrl = rows.map(f => ({
+      ...f,
+      frame_url: isR2Configured ? getFrameUrl(f.frame_path) : `/frames/${f.frame_path}`,
+    }));
+    res.json(framesWithUrl);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -234,7 +239,13 @@ router.get('/change-detections', async (req, res) => {
     query += ` ORDER BY cd.change_percentage DESC`;
 
     const { rows } = await pool.query(query, params);
-    res.json(rows);
+    const withUrls = rows.map(r => ({
+      ...r,
+      frame_a_url: isR2Configured ? getFrameUrl(r.frame_a_path) : `/frames/${r.frame_a_path}`,
+      frame_b_url: isR2Configured ? getFrameUrl(r.frame_b_path) : `/frames/${r.frame_b_path}`,
+      diff_url: r.diff_image_path ? (isR2Configured ? getDiffUrl(r.diff_image_path) : `/diffs/${r.diff_image_path}`) : null,
+    }));
+    res.json(withUrls);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

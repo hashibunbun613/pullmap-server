@@ -269,7 +269,7 @@
       if (!f) return;
 
       const img = document.getElementById('frameImg');
-      img.src = `/frames/${f.frame_path}`;
+      img.src = f.frame_url || `/frames/${f.frame_path}`;
       img.classList.remove('hidden');
       document.getElementById('noFrame').classList.add('hidden');
 
@@ -376,8 +376,8 @@
       const cd = changeDetections[idx];
       if (!cd) return;
 
-      document.getElementById('compareImgA').src = `/frames/${cd.frame_a_path}`;
-      document.getElementById('compareImgB').src = `/frames/${cd.frame_b_path}`;
+      document.getElementById('compareImgA').src = cd.frame_a_url || `/frames/${cd.frame_a_path}`;
+      document.getElementById('compareImgB').src = cd.frame_b_url || `/frames/${cd.frame_b_path}`;
 
       const passA = passes.find(p => p.id == cd.pass_a_id);
       const passB = passes.find(p => p.id == cd.pass_b_id);

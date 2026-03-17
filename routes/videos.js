@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { uploadVideo, deleteVideo, getVideoUrl, streamVideo, isR2Configured } = require('../lib/storage');
+const { uploadVideo, deleteVideo, getVideoUrl, streamVideo, streamFile, isR2Configured } = require('../lib/storage');
 const { extractAndStore, framesDir } = require('../lib/frame-extractor');
 const router = express.Router();
 
@@ -103,6 +103,24 @@ router.get('/video-stream/:key', async (req, res) => {
     resp.Body.pipe(res);
   } catch (err) {
     console.error('video-stream error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/r2/*key — generic R2 proxy for frames, diffs, etc.
+router.get('/r2/*', async (req, res) => {
+  const key = req.params[0];
+  try {
+    const resp = await streamFile(key);
+    if (!resp) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    res.set('Content-Type', resp.ContentType || 'application/octet-stream');
+    if (resp.ContentLength) res.set('Content-Length', String(resp.ContentLength));
+    res.set('Cache-Control', 'public, max-age=86400');
+    resp.Body.pipe(res);
+  } catch (err) {
+    console.error('r2 proxy error:', err);
     res.status(500).json({ error: err.message });
   }
 });
