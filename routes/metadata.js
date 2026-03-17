@@ -91,6 +91,42 @@ router.get('/requests', async (req, res) => {
   }
 });
 
+// POST /api/admin/request-all — request ALL videos that haven't been uploaded yet
+router.post('/admin/request-all', async (req, res) => {
+  const pool = req.pool;
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, device_id FROM segments
+       WHERE video_path IS NULL
+         AND id NOT IN (SELECT segment_id FROM video_requests WHERE status = 'pending')`
+    );
+
+    let created = 0;
+    for (const seg of rows) {
+      // Use request_point_id = 0 convention for "collect all" requests
+      // First ensure a special request point exists
+      await pool.query(
+        `INSERT INTO request_points (id, label, latitude, longitude, radius_m, priority)
+         VALUES (0, '全収集', 0, 0, 0, 1)
+         ON CONFLICT (id) DO NOTHING`
+      );
+
+      await pool.query(
+        `INSERT INTO video_requests (request_point_id, segment_id, device_id)
+         VALUES (0, $1, $2)
+         ON CONFLICT ON CONSTRAINT unique_video_request DO NOTHING`,
+        [seg.id, seg.device_id]
+      );
+      created++;
+    }
+
+    res.json({ total: rows.length, requested: created });
+  } catch (err) {
+    console.error('POST /api/admin/request-all error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/admin/segments
 router.get('/admin/segments', async (req, res) => {
   const pool = req.pool;

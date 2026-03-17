@@ -129,6 +129,7 @@
 
         <h3>操作</h3>
         <div class="control-group">
+          <button onclick="requestAll()">全動画を収集要求</button>
           <button class="secondary" onclick="detectPasses()">パスを再検出</button>
           <button class="secondary" onclick="extractFrames()">フレームを抽出</button>
         </div>
@@ -422,6 +423,13 @@
     // ============================================================
     function setStatus(text) {
       document.getElementById('statusText').textContent = text;
+    }
+
+    async function requestAll() {
+      setStatus('全セグメントの動画を要求中...');
+      const res = await fetch('/api/admin/request-all', { method: 'POST' });
+      const data = await res.json();
+      setStatus(`${data.requested} 件の動画を要求しました。iPhoneがWi-Fi接続時に送信されます。`);
     }
 
     // Init
