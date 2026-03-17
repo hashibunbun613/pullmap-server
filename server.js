@@ -9,6 +9,7 @@ const { Pool } = require('pg');
 const metadataRoutes = require('./routes/metadata');
 const requestsRoutes = require('./routes/requests');
 const videosRoutes = require('./routes/videos');
+const streetviewRoutes = require('./routes/streetview');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -35,8 +36,11 @@ app.use((req, _res, next) => {
 app.use('/api', metadataRoutes);
 app.use('/api', requestsRoutes);
 app.use('/api', videosRoutes);
+app.use('/api', streetviewRoutes);
 
 app.use('/videos', express.static(uploadsDir));
+app.use('/frames', express.static(path.join(uploadsDir, 'frames')));
+app.use('/diffs', express.static(path.join(uploadsDir, 'diffs')));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.listen(PORT, () => {

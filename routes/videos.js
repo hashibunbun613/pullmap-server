@@ -3,6 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { uploadVideo, deleteVideo, getVideoUrl, streamVideo, isR2Configured } = require('../lib/storage');
+const { extractAndStore, framesDir } = require('../lib/frame-extractor');
 const router = express.Router();
 
 const uploadsDir = path.join(__dirname, '..', 'uploads');
@@ -71,6 +72,17 @@ router.put('/video/:segmentId', upload.single('video'), async (req, res) => {
     );
 
     res.json({ ok: true, adopted: true });
+
+    // Async frame extraction (don't block response)
+    const segRow = (await pool.query(
+      'SELECT id, latitude, longitude, recorded_at FROM segments WHERE id = $1', [segmentId]
+    )).rows[0];
+    if (segRow) {
+      const videoLocalPath = path.join(uploadsDir, videoKey);
+      if (fs.existsSync(videoLocalPath)) {
+        extractAndStore(videoLocalPath, segRow, pool).catch(() => {});
+      }
+    }
   } catch (err) {
     console.error('PUT /api/video/:segmentId error:', err);
     res.status(500).json({ error: err.message });

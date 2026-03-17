@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Data Kaat - Street View + 差分検知</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; height: 100vh; display: flex; flex-direction: column; background: #1a1a2e; color: #eee; }
+
+    header { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; background: #16213e; border-bottom: 1px solid #0f3460; }
+    header h1 { font-size: 16px; font-weight: 600; color: #e94560; }
+    header .nav-link { color: #a0a0b0; text-decoration: none; font-size: 13px; }
+    header .nav-link:hover { color: #fff; }
+
+    .main { flex: 1; display: flex; overflow: hidden; }
+
+    #map { flex: 1; min-width: 0; }
+
+    .panel { width: 420px; display: flex; flex-direction: column; background: #16213e; border-left: 1px solid #0f3460; }
+
+    .viewer { flex: 1; position: relative; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+    .viewer img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .viewer .no-frame { color: #555; font-size: 14px; }
+    .viewer .frame-info { position: absolute; bottom: 8px; left: 8px; font-size: 11px; color: rgba(255,255,255,0.7); background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px; }
+    .viewer .direction-badge { position: absolute; top: 8px; right: 8px; font-size: 12px; padding: 4px 10px; border-radius: 12px; background: #e94560; color: #fff; font-weight: 600; }
+
+    .slider-area { padding: 8px 16px; background: #1a1a2e; }
+    .slider-area input[type="range"] { width: 100%; accent-color: #e94560; }
+    .slider-labels { display: flex; justify-content: space-between; font-size: 11px; color: #888; margin-top: 2px; }
+
+    .controls { padding: 12px 16px; border-top: 1px solid #0f3460; overflow-y: auto; max-height: 280px; }
+    .controls h3 { font-size: 13px; color: #e94560; margin-bottom: 8px; }
+    .control-group { margin-bottom: 12px; }
+    .control-group label { display: block; font-size: 11px; color: #888; margin-bottom: 4px; }
+    .control-group select, .control-group button { width: 100%; padding: 8px; border: 1px solid #0f3460; border-radius: 4px; font-size: 13px; background: #1a1a2e; color: #eee; cursor: pointer; }
+    .control-group button { background: #e94560; border: none; color: #fff; font-weight: 600; margin-top: 4px; }
+    .control-group button:hover { background: #c73450; }
+    .control-group button.secondary { background: #0f3460; }
+    .control-group button.secondary:hover { background: #1a4a80; }
+    .control-group button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .compare-view { display: flex; flex: 1; background: #000; }
+    .compare-view .side { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; }
+    .compare-view .side img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .compare-view .side-label { position: absolute; top: 8px; left: 8px; font-size: 11px; background: rgba(0,0,0,0.6); color: #fff; padding: 3px 8px; border-radius: 4px; }
+    .compare-view .divider { width: 2px; background: #e94560; }
+
+    .status-bar { padding: 6px 16px; background: #0f3460; font-size: 11px; color: #a0a0b0; display: flex; justify-content: space-between; }
+
+    .change-list { list-style: none; padding: 0; max-height: 120px; overflow-y: auto; }
+    .change-list li { padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #0f3460; display: flex; justify-content: space-between; cursor: pointer; }
+    .change-list li:hover { background: #1a1a2e; }
+    .change-bar { width: 60px; height: 8px; background: #333; border-radius: 4px; overflow: hidden; display: inline-block; vertical-align: middle; }
+    .change-bar-fill { height: 100%; border-radius: 4px; }
+
+    .mode-toggle { display: flex; gap: 0; margin-bottom: 8px; }
+    .mode-toggle button { flex: 1; padding: 6px; border: 1px solid #0f3460; background: #1a1a2e; color: #888; font-size: 12px; cursor: pointer; }
+    .mode-toggle button:first-child { border-radius: 4px 0 0 4px; }
+    .mode-toggle button:last-child { border-radius: 0 4px 4px 0; }
+    .mode-toggle button.active { background: #e94560; color: #fff; border-color: #e94560; }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Data Kaat Street View</h1>
+    <a href="/" class="nav-link">← 管理画面に戻る</a>
+  </header>
+
+  <div class="main">
+    <div id="map"></div>
+    <div class="panel">
+
+      <div class="mode-toggle" style="padding: 8px 16px 0;">
+        <button class="active" onclick="setMode('streetview')">ストリートビュー</button>
+        <button onclick="setMode('compare')">差分検知</button>
+      </div>
+
+      <!-- Street View Mode -->
+      <div id="mode-streetview">
+        <div class="viewer" id="frameViewer">
+          <span class="no-frame" id="noFrame">パスを選択してください</span>
+          <img id="frameImg" class="hidden" />
+          <div class="frame-info" id="frameInfo"></div>
+          <div class="direction-badge hidden" id="dirBadge"></div>
+        </div>
+        <div class="slider-area">
+          <input type="range" id="frameSlider" min="0" max="0" value="0" oninput="onSlide(this.value)" />
+          <div class="slider-labels">
+            <span id="sliderStart">-</span>
+            <span id="sliderPos">-</span>
+            <span id="sliderEnd">-</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Compare Mode -->
+      <div id="mode-compare" class="hidden">
+        <div class="compare-view" id="compareView">
+          <div class="side">
+            <div class="side-label" id="labelA">Before</div>
+            <img id="compareImgA" />
+          </div>
+          <div class="divider"></div>
+          <div class="side">
+            <div class="side-label" id="labelB">After</div>
+            <img id="compareImgB" />
+          </div>
+        </div>
+        <div class="slider-area">
+          <input type="range" id="compareSlider" min="0" max="0" value="0" oninput="onCompareSlide(this.value)" />
+          <div class="slider-labels">
+            <span id="cmpSliderInfo">差分検知を実行してください</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <div class="control-group">
+          <label>パス選択</label>
+          <select id="passSelect" onchange="loadPass(this.value)">
+            <option value="">読み込み中...</option>
+          </select>
+        </div>
+
+        <h3>操作</h3>
+        <div class="control-group">
+          <button class="secondary" onclick="detectPasses()">パスを再検出</button>
+          <button class="secondary" onclick="extractFrames()">フレームを抽出</button>
+        </div>
+
+        <h3>差分検知</h3>
+        <div class="control-group">
+          <label>比較対象パス</label>
+          <select id="compareTo">
+            <option value="">比較先を選択...</option>
+          </select>
+          <button onclick="runCompare()" id="btnCompare">差分を検知</button>
+          <button onclick="autoRerequest()" id="btnRerequest" class="secondary" disabled>変化箇所を自動再収集</button>
+        </div>
+
+        <div id="changeResults" class="hidden">
+          <h3>検知結果</h3>
+          <p style="font-size:12px; margin-bottom:6px;" id="changesSummary"></p>
+          <ul class="change-list" id="changeList"></ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="status-bar">
+    <span id="statusText">準備完了</span>
+    <span id="statusCoord">-</span>
+  </div>
+
+  <script>
+    const map = L.map('map').setView([35.69, 139.79], 15);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap'
+    }).addTo(map);
+
+    let routeLayer = L.layerGroup().addTo(map);
+    let markerLayer = L.layerGroup().addTo(map);
+    let changeLayer = L.layerGroup().addTo(map);
+    let currentMarker = null;
+
+    let passes = [];
+    let currentFrames = [];
+    let currentPassId = null;
+    let changeDetections = [];
+    let currentMode = 'streetview';
+
+    // ============================================================
+    // Mode switching
+    // ============================================================
+    function setMode(mode) {
+      currentMode = mode;
+      document.querySelectorAll('.mode-toggle button').forEach(b => b.classList.remove('active'));
+      document.querySelector(`.mode-toggle button[onclick="setMode('${mode}')"]`).classList.add('active');
+      document.getElementById('mode-streetview').classList.toggle('hidden', mode !== 'streetview');
+      document.getElementById('mode-compare').classList.toggle('hidden', mode !== 'compare');
+    }
+
+    // ============================================================
+    // Pass management
+    // ============================================================
+    async function fetchPasses() {
+      setStatus('パス一覧を読み込み中...');
+      const res = await fetch('/api/passes');
+      passes = await res.json();
+      const sel = document.getElementById('passSelect');
+      const cmp = document.getElementById('compareTo');
+      sel.innerHTML = '<option value="">パスを選択...</option>';
+      cmp.innerHTML = '<option value="">比較先を選択...</option>';
+
+      passes.forEach(p => {
+        const dt = new Date(p.started_at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const label = `${dt} ${p.direction_label || ''}→ (${p.segment_count}セグ, ${p.frame_count || 0}フレーム)`;
+        sel.innerHTML += `<option value="${p.id}">${label}</option>`;
+        cmp.innerHTML += `<option value="${p.id}">${label}</option>`;
+      });
+
+      setStatus(`${passes.length} パスを検出済み`);
+    }
+
+    async function detectPasses() {
+      setStatus('パスを再検出中...');
+      const res = await fetch('/api/admin/detect-passes', { method: 'POST' });
+      const data = await res.json();
+      setStatus(`${data.passes} パスを検出しました`);
+      await fetchPasses();
+    }
+
+    async function extractFrames() {
+      setStatus('フレームを抽出中...(時間がかかります)');
+      const res = await fetch('/api/admin/extract-frames', { method: 'POST' });
+      const data = await res.json();
+      setStatus(`${data.extracted}/${data.total} フレームを抽出しました`);
+      if (currentPassId) loadPass(currentPassId);
+    }
+
+    // ============================================================
+    // Street View
+    // ============================================================
+    async function loadPass(passId) {
+      if (!passId) return;
+      currentPassId = passId;
+      setStatus('フレームを読み込み中...');
+
+      const res = await fetch(`/api/passes/${passId}/frames`);
+      currentFrames = await res.json();
+
+      routeLayer.clearLayers();
+      markerLayer.clearLayers();
+
+      if (currentFrames.length === 0) {
+        document.getElementById('noFrame').textContent = 'フレームがありません。「フレームを抽出」を実行してください。';
+        document.getElementById('noFrame').classList.remove('hidden');
+        document.getElementById('frameImg').classList.add('hidden');
+        setStatus('フレームなし');
+        return;
+      }
+
+      const coords = currentFrames.map(f => [f.latitude, f.longitude]);
+      const polyline = L.polyline(coords, { color: '#e94560', weight: 4, opacity: 0.8 }).addTo(routeLayer);
+      map.fitBounds(polyline.getBounds(), { padding: [40, 40] });
+
+      const slider = document.getElementById('frameSlider');
+      slider.max = currentFrames.length - 1;
+      slider.value = 0;
+
+      const pass = passes.find(p => p.id == passId);
+      if (pass) {
+        const badge = document.getElementById('dirBadge');
+        badge.textContent = `${pass.direction_label || ''} →`;
+        badge.classList.remove('hidden');
+      }
+
+      showFrame(0);
+      setStatus(`${currentFrames.length} フレームを表示中`);
+    }
+
+    function showFrame(idx) {
+      const f = currentFrames[idx];
+      if (!f) return;
+
+      const img = document.getElementById('frameImg');
+      img.src = `/frames/${f.frame_path}`;
+      img.classList.remove('hidden');
+      document.getElementById('noFrame').classList.add('hidden');
+
+      const time = new Date(f.captured_at).toLocaleString('ja-JP');
+      document.getElementById('frameInfo').textContent = `${time} | ${f.latitude.toFixed(5)}, ${f.longitude.toFixed(5)}`;
+      document.getElementById('statusCoord').textContent = `${f.latitude.toFixed(6)}, ${f.longitude.toFixed(6)}`;
+
+      const first = currentFrames[0];
+      const last = currentFrames[currentFrames.length - 1];
+      document.getElementById('sliderStart').textContent = new Date(first.captured_at).toLocaleTimeString('ja-JP');
+      document.getElementById('sliderPos').textContent = `${idx + 1} / ${currentFrames.length}`;
+      document.getElementById('sliderEnd').textContent = new Date(last.captured_at).toLocaleTimeString('ja-JP');
+
+      markerLayer.clearLayers();
+      currentMarker = L.circleMarker([f.latitude, f.longitude], {
+        radius: 8, fillColor: '#e94560', fillOpacity: 1, color: '#fff', weight: 2
+      }).addTo(markerLayer);
+      map.panTo([f.latitude, f.longitude]);
+    }
+
+    function onSlide(val) {
+      showFrame(parseInt(val));
+    }
+
+    // ============================================================
+    // Change Detection
+    // ============================================================
+    async function runCompare() {
+      const passAId = currentPassId;
+      const passBId = document.getElementById('compareTo').value;
+      if (!passAId || !passBId) {
+        alert('2つのパスを選択してください');
+        return;
+      }
+
+      setStatus('差分検知を実行中...(時間がかかります)');
+      document.getElementById('btnCompare').disabled = true;
+
+      try {
+        const res = await fetch('/api/admin/compare-passes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ passAId: parseInt(passAId), passBId: parseInt(passBId) })
+        });
+        const data = await res.json();
+
+        const detRes = await fetch(`/api/change-detections?pass_a=${passAId}&pass_b=${passBId}`);
+        changeDetections = await detRes.json();
+
+        showChangeResults(data, passAId, passBId);
+        setStatus(`差分検知完了: ${data.comparisons} 箇所を比較、平均変化率 ${data.avgChangePercent}%`);
+      } catch (err) {
+        setStatus('差分検知エラー: ' + err.message);
+      }
+
+      document.getElementById('btnCompare').disabled = false;
+    }
+
+    function showChangeResults(data, passAId, passBId) {
+      const resultsDiv = document.getElementById('changeResults');
+      resultsDiv.classList.remove('hidden');
+      document.getElementById('changesSummary').textContent =
+        `${data.comparisons} 箇所を比較 | 平均変化率 ${data.avgChangePercent}%`;
+      document.getElementById('btnRerequest').disabled = false;
+
+      const list = document.getElementById('changeList');
+      list.innerHTML = '';
+      changeLayer.clearLayers();
+
+      changeDetections.forEach((cd, i) => {
+        const pct = cd.change_percentage.toFixed(1);
+        const color = pct > 20 ? '#ff4444' : pct > 10 ? '#ff8800' : pct > 5 ? '#ffcc00' : '#44cc44';
+
+        const li = document.createElement('li');
+        li.innerHTML = `
+          <span>${cd.latitude.toFixed(5)}, ${cd.longitude.toFixed(5)}</span>
+          <span>
+            <span class="change-bar"><span class="change-bar-fill" style="width:${Math.min(pct, 100)}%;background:${color};"></span></span>
+            ${pct}%
+          </span>`;
+        li.onclick = () => showComparison(i);
+        list.appendChild(li);
+
+        L.circleMarker([cd.latitude, cd.longitude], {
+          radius: 8 + Math.min(pct / 3, 10),
+          fillColor: color,
+          fillOpacity: 0.7,
+          color: '#fff',
+          weight: 1,
+        }).bindTooltip(`変化率: ${pct}%`).addTo(changeLayer)
+          .on('click', () => showComparison(i));
+      });
+
+      if (changeDetections.length > 0) {
+        setMode('compare');
+        const slider = document.getElementById('compareSlider');
+        slider.max = changeDetections.length - 1;
+        slider.value = 0;
+        showComparison(0);
+      }
+    }
+
+    function showComparison(idx) {
+      const cd = changeDetections[idx];
+      if (!cd) return;
+
+      document.getElementById('compareImgA').src = `/frames/${cd.frame_a_path}`;
+      document.getElementById('compareImgB').src = `/frames/${cd.frame_b_path}`;
+
+      const passA = passes.find(p => p.id == cd.pass_a_id);
+      const passB = passes.find(p => p.id == cd.pass_b_id);
+      document.getElementById('labelA').textContent =
+        `Before (${passA ? new Date(passA.started_at).toLocaleDateString('ja-JP') : ''})`;
+      document.getElementById('labelB').textContent =
+        `After (${passB ? new Date(passB.started_at).toLocaleDateString('ja-JP') : ''})`;
+
+      document.getElementById('cmpSliderInfo').textContent =
+        `${idx + 1}/${changeDetections.length} | 変化率 ${cd.change_percentage.toFixed(1)}% | ${cd.latitude.toFixed(5)}, ${cd.longitude.toFixed(5)}`;
+
+      document.getElementById('compareSlider').value = idx;
+
+      map.panTo([cd.latitude, cd.longitude]);
+      map.setZoom(17);
+    }
+
+    function onCompareSlide(val) {
+      showComparison(parseInt(val));
+    }
+
+    // ============================================================
+    // Auto Re-request
+    // ============================================================
+    async function autoRerequest() {
+      const passAId = currentPassId;
+      const passBId = document.getElementById('compareTo').value;
+      if (!passAId || !passBId) return;
+
+      setStatus('変化箇所に要求地点を作成中...');
+      const res = await fetch('/api/admin/auto-rerequest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passAId: parseInt(passAId), passBId: parseInt(passBId), threshold: 10 })
+      });
+      const data = await res.json();
+      setStatus(`${data.requestPointsCreated} 個の要求地点を自動作成しました（検出: ${data.detected} 箇所）`);
+    }
+
+    // ============================================================
+    // Utilities
+    // ============================================================
+    function setStatus(text) {
+      document.getElementById('statusText').textContent = text;
+    }
+
+    // Init
+    fetchPasses();
+  </script>
+</body>
+</html>
