@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 const { extractAndStore, framesDir } = require('../lib/frame-extractor');
 const { comparePassFrames } = require('../lib/change-detector');
-const { getFrameUrl, getDiffUrl, isR2Configured } = require('../lib/storage');
+const { getFrameUrl, getDiffUrl, isR2Configured, downloadToBuffer } = require('../lib/storage');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 const uploadsDir = path.join(__dirname, '..', 'uploads');
 
@@ -151,11 +152,33 @@ router.post('/admin/extract-frames', async (req, res) => {
 
     let extracted = 0;
     for (const seg of segments) {
-      const videoPath = path.join(uploadsDir, seg.video_path);
-      if (!fs.existsSync(videoPath)) continue;
+      let videoPath = path.join(uploadsDir, seg.video_path);
+      let tmpPath = null;
 
-      await extractAndStore(videoPath, seg, pool);
-      extracted++;
+      if (!fs.existsSync(videoPath) && isR2Configured) {
+        let buf;
+        try {
+          buf = await downloadToBuffer(seg.video_path);
+        } catch (_) {
+          continue; // video not in R2 (e.g. old data)
+        }
+        if (buf && buf.length > 0) {
+          tmpPath = path.join(os.tmpdir(), `extract-${seg.id}.mp4`);
+          fs.writeFileSync(tmpPath, buf);
+          videoPath = tmpPath;
+        } else {
+          continue;
+        }
+      } else if (!fs.existsSync(videoPath)) {
+        continue;
+      }
+
+      try {
+        await extractAndStore(videoPath, seg, pool);
+        extracted++;
+      } finally {
+        if (tmpPath && fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+      }
     }
 
     res.json({ total: segments.length, extracted });

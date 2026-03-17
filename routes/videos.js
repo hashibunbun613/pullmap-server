@@ -77,10 +77,16 @@ router.put('/video/:segmentId', upload.single('video'), async (req, res) => {
     const segRow = (await pool.query(
       'SELECT id, latitude, longitude, recorded_at FROM segments WHERE id = $1', [segmentId]
     )).rows[0];
-    if (segRow) {
-      const videoLocalPath = path.join(uploadsDir, videoKey);
-      if (fs.existsSync(videoLocalPath)) {
-        extractAndStore(videoLocalPath, segRow, pool).catch(() => {});
+    if (segRow && req.file && req.file.buffer) {
+      const os = require('os');
+      const tmpPath = path.join(os.tmpdir(), `video-${segmentId}.mp4`);
+      try {
+        fs.writeFileSync(tmpPath, req.file.buffer);
+        await extractAndStore(tmpPath, segRow, pool);
+      } catch (e) {
+        console.error('[Videos] Frame extract error:', e.message);
+      } finally {
+        if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
       }
     }
   } catch (err) {
